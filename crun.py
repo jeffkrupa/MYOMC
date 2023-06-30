@@ -14,6 +14,8 @@ elif "lxplus" in hostname:
     host = "lxplus"
 elif "uscms" in hostname:
     host = "cmsconnect"
+elif "submit" in hostname:
+    host = "submit"
 else:
     raise ValueError("Unknown host {}".format(hostname))
 
@@ -21,10 +23,6 @@ else:
 MYOMCPATH = os.getenv("MYOMCPATH")
 if not MYOMCPATH:
     raise ValueError("Environment variable MYOMCPATH must be set. Call env.sh.")
-
-known_campaigns = [x for x in os.listdir(os.path.expandvars("$MYOMCPATH")) if x[:3]=="Run"]
-known_campaigns.append("NANOGEN")
-#known_campaigns = ["RunIIFall18GS", "RunIIFall18GSBParking", "RunIISummer20UL17wmLHE", "NANOGEN"]:
 
 def make_proxy(proxy_path):
     os.system("voms-proxy-init -voms cms -out {} -valid 72:00".format(proxy_path))
@@ -46,24 +44,25 @@ if __name__ == "__main__":
     parser.add_argument("--nevents_job", type=int, default=100, help="Number of events per job")
     parser.add_argument("--njobs", type=int, default=1, help="Number jobs")
     parser.add_argument("--keepNANOGEN", action="store_true", help="Keep NANOGEN")
-    parser.add_argument("--keepNANO", action='store_true', help="Keep NanoAOD")
     parser.add_argument("--keepMINI", action='store_true', help="Keep MiniAOD")
     parser.add_argument("--keepDR", action='store_true', help="Keep DR")
     parser.add_argument("--keepRECO", action='store_true', help="Keep RECO")
     parser.add_argument("--keepGS", action='store_true', help="Keep GS")
+    parser.add_argument("--keepNANO", action='store_true', help="Keep PFNANO")
     parser.add_argument("--keepwmLHE", action='store_true', help="Keep wmLHE")
+    parser.add_argument("--log", type=str, help="log output dir")
     parser.add_argument("--outEOS", type=str, help="Transfer files to EOS instead of back to AFS")
     parser.add_argument("--outcp", type=str, help="Transfer output files with cp")
     parser.add_argument("--gfalcp", type=str, help="Transfer output files with gfalcp")
     #parser.add_argument("--os", type=str, help="Force SLC6 or CC7 (might not work!)")
     parser.add_argument("--seed_offset", type=int, default=0, help="Offset random seed (useful for extending previous runs)")
-    parser.add_argument("--mem", type=int, default=7900, help="Memory to request")
-    parser.add_argument("--max_nthreads", type=int, default=8, help="Maximum number of threads (reduce if condor priority is a problem)")
+    parser.add_argument("--mem", type=int, default=3000, help="Memory to request")
+    parser.add_argument("--max_nthreads", type=int, default=1, help="Maximum number of threads (reduce if condor priority is a problem)")
     parser.add_argument("--overwrite", "-f", action="store_true", help="Force overwrite outputs")
     args = parser.parse_args()
 
     # Campaign check
-    if not args.campaign in known_campaigns:
+    if not args.campaign in ["RunIIFall18GS", "RunIIFall18GSBParking", "RunIISummer20UL17wmLHE", "NANOGEN", "RunIISummer20UL17wmLHE_pfnano","RunIISummer20UL18wmLHE_pfnano"]:
         raise ValueError("Unknown campaign: {}".format(args.campaign))
 
     # Check fragment exists
@@ -88,7 +87,7 @@ if __name__ == "__main__":
     #        raise ValueError("--os must be SLCern6 or CentOS7.")
 
     # For args.outEOS, make sure it's formatted correctly, and make sure output dir exists
-    if args.outEOS:
+    if args.outEOS or args.gfalcp:
         if args.outEOS[:6] != "/store" and args.outEOS[:5] != "/user":
             raise ValueError("Argument --outEOS must start with /store or /user (you specified --outEOS {})".format(args.outEOS))
         #if not os.path.isdir("/eos/uscms/{}".format(args.outEOS)):
@@ -105,9 +104,11 @@ if __name__ == "__main__":
             eos_prefix = "root://cmseos.fnal.gov"
         elif host == "cmsconnect":
             eos_prefix = "root://cmseos.fnal.gov"
+        elif host == "submit":
+            eos_prefix = "davs://xrootd.cmsaf.mit.edu:1904/"
         else:
             raise ValueError("Unable to determine EOS prefix")
-
+        print("eos_prefix",eos_prefix)
         # Create output directory
         if host == "lxplus" or host == "cmslpc":
             import subprocess
@@ -133,6 +134,24 @@ if __name__ == "__main__":
                 print("WARNING : EOS output directory {} already exists! Writing to existing directory, but be careful.".format(args.outEOS))
             else:
                 print("Creating EOS output directory {}".format(args.outEOS))
+                subp = subprocess.Popen(f"gfal-mkdir -p {gfal_dir}".split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, stderr = subp.communicate()
+                print(stdout)
+                print(stderr)
+
+        elif host == "submit":
+            # Use gfal instead of eos
+            #gfal_dir = f"gsiftp://cmseos-gridftp.fnal.gov//eos/uscms/{args.outEOS}" # This no longer works -- cmsconnect doesn't seem to have gridftp installed
+            gfal_dir = f"{args.gfalcp}"
+            print("HELLO!!!!", gfal_dir)
+            import subprocess
+            subp = subprocess.Popen(f"gfal-ls {gfal_dir}".split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = subp.communicate()
+            if subp.returncode == 0:
+                print("WARNING : EOS output directory {} already exists! Writing to existing directory, but be careful.".format(args.gfalcp))
+            else:
+                print("Creating EOS output directory {}".format(args.gfalcp))
+                print(f"gfal-mkdir -p {gfal_dir}".split())
                 subp = subprocess.Popen(f"gfal-mkdir -p {gfal_dir}".split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 stdout, stderr = subp.communicate()
                 print(stdout)
@@ -183,10 +202,10 @@ if __name__ == "__main__":
         run_script.write("mv *py $_CONDOR_SCRATCH_DIR\n")
 
         if args.outEOS:
+            #if args.keepNANO:
+            #    run_script.write("xrdcp *NANO*root {}/{} \n".format(eos_prefix, args.outEOS))
             if args.keepNANOGEN:
                 run_script.write("xrdcp -p -f *NANOGEN*root {}/{} \n".format(eos_prefix, args.outEOS))
-            if args.keepNANO:
-                run_script.write("xrdcp -p -f *NANOAOD*root {}/{} \n".format(eos_prefix, args.outEOS))
             if args.keepMINI:
                 run_script.write("xrdcp -p -f *MINIAOD*root {}/{} \n".format(eos_prefix, args.outEOS))
             if args.keepDR:
@@ -213,7 +232,7 @@ if __name__ == "__main__":
                 run_script.write("cp *GS*root {} \n".format(args.outcp))
             if args.keepwmLHE:
                 run_script.write("cp *wmLHE*root {} \n".format(args.outcp))
-        elif args.gfalcp:
+        if args.gfalcp:
             run_script.write("echo \"Starting gfal-cp from $PWD\n\"")
             run_script.write("echo \"Contents of current directory:\n\"")
             run_script.write("ls -lrth \n")
@@ -224,7 +243,7 @@ if __name__ == "__main__":
                 run_script.write("   env -i bash -l -c \"export X509_USER_PROXY=$_CONDOR_SCRATCH_DIR/x509up; gfal-copy -f -p -v -t 180 file://$PWD/$FILENAME '{}/$FILENAME' 2>&1\"\n".format(args.gfalcp))
                 run_script.write("done\n")
             if args.keepNANO:
-                run_script.write("for FILENAME in ./*NanoAOD*root; do\n")
+                run_script.write("for FILENAME in ./*NANOAOD*root; do\n")
                 run_script.write("   echo \"Copying $FILENAME\"\n")
                 run_script.write("   env -i bash -l -c \"export X509_USER_PROXY=$_CONDOR_SCRATCH_DIR/x509up; gfal-copy -f -p -v -t 180 file://$PWD/$FILENAME '{}/$FILENAME' 2>&1\"\n".format(args.gfalcp))
                 run_script.write("done\n")
@@ -250,6 +269,24 @@ if __name__ == "__main__":
                 run_script.write("done\n")
             if args.keepwmLHE:
                 run_script.write("for FILENAME in ./*wmLHE*root; do\n")
+                run_script.write("   echo \"Copying $FILENAME\"\n")
+                run_script.write("   env -i bash -l -c \"export X509_USER_PROXY=$_CONDOR_SCRATCH_DIR/x509up; gfal-copy -f -p -v -t 180 file://$PWD/$FILENAME '{}/$FILENAME' 2>&1\"\n".format(args.gfalcp))
+                run_script.write("done\n")
+        if args.outEOS:
+            if args.keepNANOGEN:
+                run_script.write("mv *NANOGEN*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepNANO:
+                run_script.write("mv *NanoAOD*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepMINI:
+                run_script.write("mv *MiniAOD*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepDR:
+                run_script.write("mv *DR*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepRECO:
+                run_script.write("mv *RECO*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepGS:
+                run_script.write("mv *GS*root $_CONDOR_SCRATCH_DIR\n")
+            if args.keepwmLHE:
+                run_script.write("mv *wmLHE*root $_CONDOR_SCRATCH_DIR\n")
                 run_script.write("   echo \"Copying $FILENAME\"\n")
                 run_script.write("   env -i bash -l -c \"export X509_USER_PROXY=$_CONDOR_SCRATCH_DIR/x509up; gfal-copy -f -p -v -t 180 file://$PWD/$FILENAME '{}/$FILENAME' 2>&1\"\n".format(args.gfalcp))
                 run_script.write("done\n")
@@ -280,11 +317,12 @@ if __name__ == "__main__":
         files_to_transfer.append("{}/{}/pileupinput.dat".format(MYOMCPATH, args.campaign))
     if args.env:
         files_to_transfer.append("{}/{}/env.tar.gz".format(MYOMCPATH, args.campaign))
-    csub_command = "csub runwrapper.sh -t tomorrow --mem {} --nCores {} -F {} --queue_n {} -x $HOME/private/x509up".format(
+    csub_command = "csub runwrapper.sh -t tomorrow --mem {} --nCores {} -F {} --queue_n {} -x $HOME/private/x509up -l {}".format(
                         args.mem,
                         args.max_nthreads, 
                         ",".join(files_to_transfer), 
-                        args.njobs) # 
+                        args.njobs ,
+                        args.log+"/",) # 
     '''
     if not args.os:
         # Infer OS from campaign
