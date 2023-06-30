@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--mem", type=int, default=3000, help="Memory to request")
     parser.add_argument("--max_nthreads", type=int, default=1, help="Maximum number of threads (reduce if condor priority is a problem)")
     parser.add_argument("--overwrite", "-f", action="store_true", help="Force overwrite outputs")
+    parser.add_argument("--extra_files", "-x", type=str, help="Extra files to transfer, e.g. gridpacks")
     args = parser.parse_args()
 
     # Campaign check
@@ -317,7 +318,9 @@ if __name__ == "__main__":
         files_to_transfer.append("{}/{}/pileupinput.dat".format(MYOMCPATH, args.campaign))
     if args.env:
         files_to_transfer.append("{}/{}/env.tar.gz".format(MYOMCPATH, args.campaign))
-    csub_command = "csub runwrapper.sh -t tomorrow --mem {} --nCores {} -F {} --queue_n {} -x $HOME/private/x509up -l {}".format(
+    if args.extra_files:
+        files_to_transfer.extend(args.extra_files.split(","))
+    csub_command = "csub runwrapper.sh -t tomorrow --mem {} --nCores {} -F {} --queue_n {} -x $HOME/private/x509up".format(
                         args.mem,
                         args.max_nthreads, 
                         ",".join(files_to_transfer), 
